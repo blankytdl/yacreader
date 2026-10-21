@@ -3,8 +3,8 @@ name: Build
 # Standalone build for forks: no signing secrets, no clang-format gate and no
 # prebuilt binaries from the `dependencies` folder are required.
 # Run it from the "Actions" tab ("Run workflow") or push to any branch.
-# The project folder is found automatically, so it can live in the repository
-# root or inside a subfolder.
+# The project folder is found automatically: repository root, a subfolder, or
+# even a .zip of the project committed to the repository.
 
 on:
   workflow_dispatch:
@@ -35,14 +35,29 @@ jobs:
       - name: Locate YACReader source
         shell: pwsh
         run: |
-          $cmake = Get-ChildItem -Path . -Filter CMakeLists.txt -Recurse -Depth 3 -File |
-            Where-Object { Test-Path (Join-Path $_.DirectoryName "YACReaderLibrary/CMakeLists.txt") } |
-            Sort-Object { $_.FullName.Length } |
-            Select-Object -First 1
+          function Find-Source {
+            Get-ChildItem -Path . -Filter CMakeLists.txt -Recurse -Depth 5 -File |
+              Where-Object { Test-Path (Join-Path $_.DirectoryName "YACReaderLibrary/CMakeLists.txt") } |
+              Sort-Object { $_.FullName.Length } |
+              Select-Object -First 1
+          }
+
+          $cmake = Find-Source
+
+          # The project may have been uploaded as a .zip instead of extracted files
+          if (-not $cmake) {
+            Get-ChildItem -Path . -Filter *.zip -Recurse -Depth 3 -File | ForEach-Object {
+              Write-Host "Extracting $($_.FullName)"
+              Expand-Archive -Path $_.FullName -DestinationPath "_extracted/$($_.BaseName)" -Force
+            }
+            $cmake = Find-Source
+          }
+
           if (-not $cmake) {
             Get-ChildItem -Depth 2 | Format-Table FullName
             throw "Could not find the YACReader source (a folder with CMakeLists.txt and YACReaderLibrary/)"
           }
+
           $src = $cmake.DirectoryName
           Write-Host "Source directory: $src"
           "SRC_DIR=$src" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
