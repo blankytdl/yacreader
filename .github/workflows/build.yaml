@@ -138,6 +138,54 @@ jobs:
             Where-Object { $_.BaseName -notmatch "_source$" } |
             Copy-Item -Destination "$dist/languages"
 
+      - name: Add 7z.dll (required by the 7zip backend at runtime)
+        shell: pwsh
+        run: |
+          # YACReader loads <app dir>/utils/7z.dll to open cbz/cbr/cb7 files. Without it every
+          # archive fails to open. The in-tree sources are 7-Zip 23.01, so prefer the same version.
+          $utils = "dist/YACReader/utils"
+          New-Item -ItemType Directory -Force $utils | Out-Null
+          $utilsFull = (Resolve-Path $utils).Path
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+
+          try {
+            Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2301-x64.exe" -OutFile 7z2301-x64.exe
+            & $sevenZip e 7z2301-x64.exe 7z.dll "-o$utilsFull" -y | Out-Null
+          } catch {
+            Write-Host "Could not fetch 7-Zip 23.01: $_"
+          }
+
+          if (-not (Test-Path "$utilsFull/7z.dll")) {
+            Write-Host "Falling back to the 7-Zip installed on the runner"
+            Copy-Item "C:\Program Files\7-Zip\7z.dll" $utilsFull
+          }
+
+          dumpbin /exports "$utilsFull/7z.dll" | Select-String "CreateObject" | ForEach-Object { Write-Host $_ }
+          if (-not (dumpbin /exports "$utilsFull/7z.dll" | Select-String "CreateObject")) {
+            throw "7z.dll does not export CreateObject"
+          }
+
+      - name: Verify package contents
+        shell: pwsh
+        run: |
+          $dist = "dist/YACReader"
+          $required = @(
+            "YACReader.exe",
+            "YACReaderLibrary.exe",
+            "YACReaderLibraryServer.exe",
+            "utils/7z.dll",
+            "Qt6Core.dll",
+            "platforms/qwindows.dll",
+            "imageformats/qgif.dll",
+            "imageformats/qjpeg.dll"
+          )
+          $missing = $required | Where-Object { -not (Test-Path (Join-Path $dist $_)) }
+          if ($missing) {
+            Get-ChildItem $dist -Recurse | Select-Object -First 200 FullName
+            throw "Package is incomplete, missing: $($missing -join ', ')"
+          }
+          Write-Host "Package looks complete"
+
       - name: Upload portable build
         uses: actions/upload-artifact@v5
         with:
